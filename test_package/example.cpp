@@ -3,8 +3,18 @@
 #include <stdlib.h>
 #include <time.h>
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#include <emscripten/html5.h>
+#endif
+
 #define SCREEN_WIDTH 320
 #define SCREEN_HEIGHT 480
+
+SDL_Renderer *renderer;
+SDL_Event event;
+int done = 0;
+int count;
 
 int randomInt(int min, int max) {
     return min + rand() % (max - min + 1);
@@ -37,11 +47,19 @@ void render(SDL_Renderer *renderer) {
     SDL_RenderPresent(renderer);
 }
 
+void loop_iteration() {
+  while (SDL_PollEvent(&event)) {
+      if (event.type == SDL_QUIT) {
+          done = 1;
+      }
+   }
+
+   render(renderer);
+   return ;
+}
+
 int main(int argc, char *argv[]) {
     SDL_Window *window;
-    SDL_Renderer *renderer;
-    int done, count;
-    SDL_Event event;
 
     /* initialize SDL */
     if (SDL_Init(SDL_INIT_VIDEO) < 0) {
@@ -67,18 +85,16 @@ int main(int argc, char *argv[]) {
     }
 
     /* Enter render loop, waiting for user to quit */
-    done = 0;
     count = 0;
 
+#ifdef __EMSCRIPTEN__
+    emscripten_set_main_loop(loop_iteration, 0, true);
+#else
     while (!done && count++ < 5000) {
-        while (SDL_PollEvent(&event)) {
-            if (event.type == SDL_QUIT) {
-                done = 1;
-            }
-        }
-        render(renderer);
-        SDL_Delay(1);
+       loop_iteration();
+       SDL_Delay(1);
     }
+#endif
 
     /* shutdown SDL */
     SDL_Quit();

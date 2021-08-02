@@ -18,38 +18,56 @@ class Recipe(ConanFile):
         'shared': [True, False],
         'fPIC': [True, False],
     }
-    default_options = {'shared': False, 'fPIC': True}
-    build_policy = 'missing'
+    default_options = {
+        'shared': False,
+        'fPIC': True,
+    }
 
     generators = 'cmake'
     exports_sources = ['patches/*']
-
-    def config_options(self):
-        if self.settings.os == "Windows":
-            del self.options.fPIC
-
-    def configure(self):
-        # It's a C project - remove irrelevant settings
-        del self.settings.compiler.libcxx
-        del self.settings.compiler.cppstd
-
-        if self.settings.os == 'Android':
-            self.requires('cpu-features/0.4.1@conan-burrito/stable')
-
-        if self.settings.os == 'watchOS':
-            raise ConanException('watchOS is currently not supported')
 
     @property
     def source_subfolder(self):
         return os.path.join(self.source_folder, 'src')
 
+    @property
+    def build_subfolder(self):
+        return os.path.join(self.source_folder, '_build')
+
+    def config_options(self):
+        if self.settings.os == 'Windows':
+            del self.options.fPIC
+
+    def configure(self):
+        if self.options.shared:
+            del self.options.fPIC
+
+        # It's a C project - remove irrelevant settings
+        del self.settings.compiler.libcxx
+        del self.settings.compiler.cppstd
+
+        if self.settings.os == 'watchOS':
+            raise ConanException('watchOS is currently not supported')
+
+    def requirements(self):
+        if self.settings.os == 'Android':
+            self.requires('cpu-features/0.6.0@conan-burrito/stable')
+
     def source(self):
-        tools.get(**self.conan_data["sources"][self.version])
-        os.rename("{}-{}".format(self.name, self.version), 'src')
-        for patch in self.conan_data["patches"][self.version]:
-            tools.patch(**patch)
+        tools.get(**self.conan_data["sources"][self.version], strip_root=True, destination=self.source_subfolder)
 
     def build(self):
+        for patch in self.conan_data['patches'][self.version]:
+            tools.patch(**patch)
+
+        # ensure sdl2-config is created for MinGW
+        tools.replace_in_file(os.path.join(self.source_subfolder, "CMakeLists.txt"),
+                              "if(NOT WINDOWS OR CYGWIN)",
+                              "if(NOT WINDOWS OR CYGWIN OR MINGW)")
+        tools.replace_in_file(os.path.join(self.source_subfolder, "CMakeLists.txt"),
+                              "if(NOT (WINDOWS OR CYGWIN))",
+                              "if(NOT (WINDOWS OR CYGWIN OR MINGW))")
+
         cmake = CMake(self)
         if self.settings.os in ['iOS', 'Macos', 'tvOS']:
             unsupported_features = ['FSEEKO64', 'ITOA', '_LTOA', '_STRLWR', '_STRREV', '_STRUPR', '_UI64TOA', '_UITOA',
@@ -75,11 +93,11 @@ class Recipe(ConanFile):
         # Extract the License/s from the header to a file
         with tools.chdir(self.source_subfolder):
             tmp = tools.load(os.path.join(self.source_subfolder, 'include', 'SDL.h'))
-            license_contents = tmp[2:tmp.find("*/", 1)]
-            tools.save("LICENSE", license_contents)
+            license_contents = tmp[2:tmp.find('*/', 1)]
+            tools.save('LICENSE', license_contents)
 
         # Copy the license files
-        self.copy("LICENSE", src=self.source_subfolder, dst="licenses")
+        self.copy('LICENSE', src=self.source_subfolder, dst='licenses')
 
         # Binaries are bound to the build OS
         tools.rmdir(os.path.join(self.package_folder, 'bin'))
@@ -91,24 +109,24 @@ class Recipe(ConanFile):
                       dst=java_target, keep_path=True)
 
             key_name = 'shared' if self.options.shared else 'static'
-            for patch in self.conan_data["package_patches"][self.version][key_name]:
+            for patch in self.conan_data['package_patches'][self.version][key_name]:
                 tools.patch(**patch, base_path=java_target)
 
     def package_info(self):
         self.cpp_info.libs.append('SDL2')
         self.cpp_info.libs.append('SDL2main')
 
-        self.cpp_info.names["cmake_find_package"] = "SDL2"
-        self.cpp_info.names["cmake_find_package_multi"] = "SDL2"
+        self.cpp_info.names['cmake_find_package'] = 'SDL2'
+        self.cpp_info.names['cmake_find_package_multi'] = 'SDL2'
 
         if self.settings.os == 'Macos':
-            self.cpp_info.libs.append("iconv")
+            self.cpp_info.libs.append('iconv')
             self.cpp_info.frameworks.extend(['AudioToolbox', 'CoreAudio', 'CoreGraphics', 'CoreFoundation',
                                              'CoreVideo', 'QuartzCore', 'Metal', 'Cocoa', 'Carbon', 'Foundation',
                                              'CoreServices', 'ApplicationServices', 'AppKit', 'IOKit', 'ForceFeedback'])
 
         elif self.settings.os in ['iOS', 'tvOS']:
-            self.cpp_info.libs.append("iconv")
+            self.cpp_info.libs.append('iconv')
             self.cpp_info.frameworks.extend(['AudioToolbox', 'AVFoundation', 'CoreAudio', 'CoreGraphics',
                                              'Foundation', 'GameController', 'Metal', 'OpenGLES', 'QuartzCore', 'UIKit',
                                              'CoreBluetooth'])
