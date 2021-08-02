@@ -129,7 +129,7 @@ class Recipe(ConanFile):
             self.cpp_info.libs.append('iconv')
             self.cpp_info.frameworks.extend(['AudioToolbox', 'AVFoundation', 'CoreAudio', 'CoreGraphics',
                                              'Foundation', 'GameController', 'Metal', 'OpenGLES', 'QuartzCore', 'UIKit',
-                                             'CoreBluetooth'])
+                                             'CoreBluetooth', 'CoreHaptics'])
             if self.settings.os == 'iOS':
                 self.cpp_info.frameworks.append('CoreMotion')
 
