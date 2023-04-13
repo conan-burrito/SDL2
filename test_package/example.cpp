@@ -90,7 +90,7 @@ int main(int argc, char *argv[]) {
 #ifdef __EMSCRIPTEN__
     emscripten_set_main_loop(loop_iteration, 0, true);
 #else
-    while (!done && count++ < 5000) {
+    while (!done && count++ < 500) {
        loop_iteration();
        SDL_Delay(1);
     }

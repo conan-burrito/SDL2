@@ -1,150 +1,462 @@
-from conans import tools, ConanFile, CMake
-from conans.errors import ConanException
+from conan import ConanFile
+from conan.errors import ConanInvalidConfiguration
+from conan.tools.apple import is_apple_os
+from conan.tools.files import apply_conandata_patches, get, replace_in_file, rm, rmdir, copy
+from conan.tools.microsoft import is_msvc
+from conan.tools.build import cross_building
+from conan.tools.scm import Version
+from conan.tools.cmake import CMake, CMakeToolchain, cmake_layout
+from conan.tools.env import Environment
 
 import os
 
 
 class Recipe(ConanFile):
-    name = 'SDL2'
+    name = 'sdl2'
     description = 'Simple DirectMedia Layer is a cross-platform development library designed to provide ' \
                   'low level access to audio, keyboard, mouse, joystick, and graphics hardware via ' \
                   'OpenGL and Direct3D'
     homepage = 'http://www.libsdl.org'
-    license = 'Zlib (https://www.zlib.net/zlib_license.html)'
+    license = 'Zlib (https://www.libsdl.org/license.php)'
     url = 'https://github.com/conan-burrito/SDL2'
+    version = '2.26.4'
 
     settings = 'os', 'arch', 'compiler', 'build_type'
     options = {
         'shared': [True, False],
         'fPIC': [True, False],
+
+        'directx': [True, False],
+
+        'alsa': [True, False],
+        'jack': [True, False],
+        'pulse': [True, False],
+        'sndio': [True, False],
+        'nas': [True, False],
+        'esd': [True, False],
+        'arts': [True, False],
+        'x11': [True, False],
+        'xcursor': [True, False],
+        'xinerama': [True, False],
+        'xinput': [True, False],
+        'xrandr': [True, False],
+        'xscrnsaver': [True, False],
+        'xshape': [True, False],
+        'xvm': [True, False],
+        'wayland': [True, False],
+        'directfb': [True, False],
+        'video_rpi': [True, False],
+        'libunwind': [True, False],
+
+        'iconv': [True, False],
+        'sdl2main': [True, False],
+        'opengl': [True, False],
+        'opengles': [True, False],
+        'vulkan': [True, False],
     }
     default_options = {
         'shared': False,
         'fPIC': True,
+
+        'directx': True,
+
+        'alsa': True,
+        'jack': False,
+        'pulse': True,
+        'sndio': False,
+        'nas': True,
+        'esd': False,
+        'arts': False,
+        'x11': True,
+        'xcursor': True,
+        'xinerama': True,
+        'xinput': True,
+        'xrandr': True,
+        'xscrnsaver': True,
+        'xshape': True,
+        'xvm': True,
+        'wayland': True,
+        'directfb': False,
+        'iconv': True,
+        'video_rpi': False,
+        'libunwind': True,
+
+        'sdl2main': True,
+        'opengl': True,
+        'opengles': True,
+        'vulkan': True,
     }
 
-    generators = 'cmake'
-    exports_sources = ['patches/*']
+    generators = 'CMakeDeps', 'PkgConfigDeps', 'VirtualBuildEnv'
 
-    @property
-    def source_subfolder(self):
-        return os.path.join(self.source_folder, 'src')
+    def layout(self):
+        cmake_layout(self, src_folder="src")
 
-    @property
-    def build_subfolder(self):
-        return os.path.join(self.source_folder, '_build')
+    def generate(self):
+        self.define_toolchain()
+        lib_paths = [lib for _, dep in self.dependencies.items() for lib in dep.cpp_info.libdirs]
+        env = Environment()
+        env.define_path("LIBRARY_PATH", os.pathsep.join(lib_paths))
+
+        # FIXME: remove and raise required_conan_version to 1.55 once it's on c3i
+        env.prepend_path("PKG_CONFIG_PATH", self.generators_folder)
+
+        env = env.vars(self, scope="build")
+        env.save_script("sdl_env")
 
     def config_options(self):
-        if self.settings.os == 'Windows':
+        if self.settings.os == "Windows":
             del self.options.fPIC
+            if is_msvc(self):
+                del self.options.iconv
+        if self.settings.os != "Linux":
+            del self.options.alsa
+            del self.options.jack
+            del self.options.pulse
+            del self.options.sndio
+            del self.options.nas
+            del self.options.esd
+            del self.options.arts
+            del self.options.x11
+            del self.options.xcursor
+            del self.options.xinerama
+            del self.options.xinput
+            del self.options.xrandr
+            del self.options.xscrnsaver
+            del self.options.xshape
+            del self.options.xvm
+            del self.options.wayland
+            del self.options.directfb
+            del self.options.video_rpi
+            del self.options.libunwind
+        if self.settings.os != "Windows":
+            del self.options.directx
 
     def configure(self):
         if self.options.shared:
-            del self.options.fPIC
+            self.options.rm_safe("fPIC")
 
         # It's a C project - remove irrelevant settings
-        del self.settings.compiler.libcxx
-        del self.settings.compiler.cppstd
+        self.settings.rm_safe("compiler.libcxx")
+        self.settings.rm_safe("compiler.cppstd")
 
-        if self.settings.os == 'watchOS':
-            raise ConanException('watchOS is currently not supported')
+        # if self.settings.os == 'watchOS':
+        #     raise ConanException('watchOS is currently not supported')
 
     def requirements(self):
-        if self.settings.os == 'Android':
-            self.requires('cpu-features/0.6.0@conan-burrito/stable')
+        if self.options.get_safe("iconv", False):
+            self.requires("libiconv/1.17")
+        if self.settings.os == "Linux":
+            if self.options.alsa:
+                self.requires("libalsa/1.2.7.2")
+            if self.options.pulse:
+                self.requires("pulseaudio/14.2")
+            if self.options.opengl:
+                self.requires("opengl/system")
+            if self.options.nas:
+                self.requires("nas/1.9.4")
+            if self.options.wayland:
+                self.requires("wayland/1.21.0")
+                self.requires("xkbcommon/1.4.1")
+                self.requires("egl/system")
+            if self.options.libunwind:
+                self.requires("libunwind/1.6.2")
+
+    def validate(self):
+        if self.settings.os == "Macos" and not self.options.iconv:
+            raise ConanInvalidConfiguration("On macOS iconv can't be disabled")
+
+        # SDL>=2.0.18 requires xcode 12 or higher because it uses CoreHaptics.
+        if Version(self.version) >= "2.0.18" and is_apple_os(self) and Version(self.settings.compiler.version) < "12":
+            raise ConanInvalidConfiguration("{}/{} requires xcode 12 or higher".format(self.name, self.version))
+
+        if self.settings.os == "Linux":
+            if self.options.sndio:
+                raise ConanInvalidConfiguration("Package for 'sndio' is not available (yet)")
+            if self.options.jack:
+                raise ConanInvalidConfiguration("Package for 'jack' is not available (yet)")
+            if self.options.esd:
+                raise ConanInvalidConfiguration("Package for 'esd' is not available (yet)")
+            if self.options.directfb:
+                raise ConanInvalidConfiguration("Package for 'directfb' is not available (yet)")
+
+    def build_requirements(self):
+        if self.settings.os == "Macos" and cross_building(self):
+            # Workaround for CMake bug with error message:
+            # Attempting to use @rpath without CMAKE_SHARED_LIBRARY_RUNTIME_C_FLAG being
+            # set. This could be because you are using a Mac OS X version less than 10.5
+            # or because CMake's platform configuration is corrupt.
+            # FIXME: Remove once CMake on macOS/M1 CI runners is upgraded.
+            # self.build_requires("cmake/3.22.0")
+            pass
+        if self.settings.os == "Linux" and not self.conf.get("tools.gnu:pkg_config", check_type=str):
+            self.tool_requires("pkgconf/1.9.3")
+        if hasattr(self, "settings_build") and self.options.get_safe("wayland"):
+            self.build_requires("wayland/1.20.0")  # Provides wayland-scanner
 
     def source(self):
-        tools.get(**self.conan_data["sources"][self.version], strip_root=True, destination=self.source_subfolder)
+        get(self, **self.conan_data["sources"][self.version], strip_root=True, destination=self.source_folder)
+
+    def _patch_sources(self):
+        apply_conandata_patches(self)
+
+        # Ensure to find wayland-scanner from wayland recipe in build requirements (or requirements if 1 profile)
+        if self.options.get_safe("wayland") and Version(self.version) >= "2.0.18":
+            wayland_bin_path = " ".join("\"{}\"".format(path) for path in self.deps_env_info["wayland"].PATH)
+            replace_in_file(self,
+                            os.path.join(self.source_folder, "cmake", "sdlchecks.cmake"),
+                            "find_program(WAYLAND_SCANNER NAMES wayland-scanner REQUIRED)",
+                            "find_program(WAYLAND_SCANNER NAMES wayland-scanner REQUIRED PATHS {} NO_DEFAULT_PATH)".format(
+                                wayland_bin_path),
+                            )
+
+    def define_toolchain(self):
+        tc = CMakeToolchain(self)
+        if self.settings.os == "Linux" and self.settings.compiler == "gcc" and Version(
+                self.settings.compiler.version) < 5.0:
+            tc.preprocessor_definitions["GBM_BO_USE_CURSOR"] = 2
+
+        # SDL2_* options will get renamed to SDL_ options in the next SDL release
+        tc.variables["SDL2_DISABLE_INSTALL"] = False
+        if is_apple_os(self):
+            tc.variables["CMAKE_OSX_ARCHITECTURES"] = {
+                "armv8": "arm64",
+            }.get(str(self.settings.arch), str(self.settings.arch))
+        cmake_required_includes = []  # List of directories used by CheckIncludeFile (https://cmake.org/cmake/help/latest/module/CheckIncludeFile.html)
+        cmake_extra_ldflags = []
+        cmake_extra_libs = []
+
+        if self.settings.os != "Windows" and not self.options.shared:
+            tc.variables["SDL_STATIC_PIC"] = self.options.fPIC
+        if is_msvc(self) and not self.options.shared:
+            tc.variables["HAVE_LIBC"] = True
+        tc.variables["SDL_SHARED"] = self.options.shared
+        tc.variables["SDL_STATIC"] = not self.options.shared
+
+        if not self.options.get_safe("iconv", False):
+            tc.variables["SDL_SYSTEM_ICONV"] = False
+
+        tc.variables["SDL_OPENGL"] = self.options.opengl
+        tc.variables["SDL_OPENGLES"] = self.options.opengles
+        tc.variables["SDL_VULKAN"] = self.options.vulkan
+        if self.settings.os == "Linux":
+            # See https://github.com/bincrafters/community/issues/696
+            tc.variables["SDL_VIDEO_DRIVER_X11_SUPPORTS_GENERIC_EVENTS"] = 1
+
+            tc.variables["SDL_ALSA"] = self.options.alsa
+            if self.options.alsa:
+                tc.variables["SDL_ALSA_SHARED"] = self.options["libalsa"].shared
+                tc.variables["HAVE_ASOUNDLIB_H"] = True
+                tc.variables["HAVE_LIBASOUND"] = True
+            tc.variables["SDL_JACK"] = self.options.jack
+            if self.options.jack:
+                tc.variables["SDL_JACK_SHARED"] = self.options["jack"].shared
+            tc.variables["SDL_ESD"] = self.options.esd
+            if self.options.esd:
+                tc.variables["SDL_ESD_SHARED"] = self.options["esd"].shared
+            tc.variables["SDL_PULSEAUDIO"] = self.options.pulse
+            if self.options.pulse:
+                tc.variables["SDL_PULSEAUDIO_SHARED"] = self.options["pulseaudio"].shared
+                for component in self.dependencies["pulseaudio"].cpp_info.components:
+                    if self.dependencies["pulseaudio"].cpp_info.components[component].libs:
+                        cmake_extra_libs += self.dependencies["pulseaudio"].cpp_info.components[component].libs
+                        cmake_extra_ldflags += ["-L{}".format(it) for it in
+                                                self.dependencies["pulseaudio"].cpp_info.components[component].libdirs]
+                cmake_extra_ldflags += ["-lxcb",
+                                        "-lrt"]  # FIXME: SDL sources doesn't take into account transitive dependencies
+            tc.variables["SDL_SNDIO"] = self.options.sndio
+            if self.options.sndio:
+                tc.variables["SDL_SNDIO_SHARED"] = self.options["sndio"].shared
+            tc.variables["SDL_NAS"] = self.options.nas
+            if self.options.nas:
+                cmake_extra_ldflags += ["-lXau"]  # FIXME: SDL sources doesn't take into account transitive dependencies
+                cmake_required_includes += self.dependencies["nas"].cpp_info.includedirs
+                tc.variables["SDL_NAS_SHARED"] = self.options["nas"].shared
+            tc.variables["SDL_X11"] = self.options.x11
+            if self.options.x11:
+                tc.variables["HAVE_XEXT_H"] = True
+            tc.variables["SDL_X11_XCURSOR"] = self.options.xcursor
+            if self.options.xcursor:
+                tc.variables["HAVE_XCURSOR_H"] = True
+            tc.variables["SDL_X11_XINERAMA"] = self.options.xinerama
+            if self.options.xinerama:
+                tc.variables["HAVE_XINERAMA_H"] = True
+            tc.variables["SDL_X11_XINPUT"] = self.options.xinput
+            if self.options.xinput:
+                tc.variables["HAVE_XINPUT_H"] = True
+            tc.variables["SDL_X11_XRANDR"] = self.options.xrandr
+            if self.options.xrandr:
+                tc.variables["HAVE_XRANDR_H"] = True
+            tc.variables["SDL_X11_XSCRNSAVER"] = self.options.xscrnsaver
+            if self.options.xscrnsaver:
+                tc.variables["HAVE_XSS_H"] = True
+            tc.variables["SDL_X11_XSHAPE"] = self.options.xshape
+            if self.options.xshape:
+                tc.variables["HAVE_XSHAPE_H"] = True
+            tc.variables["SDL_X11_XVM"] = self.options.xvm
+            if self.options.xvm:
+                tc.variables["HAVE_XF86VM_H"] = True
+            tc.variables["SDL_WAYLAND"] = self.options.wayland
+            if self.options.wayland:
+                # FIXME: Otherwise 2.0.16 links with system wayland (from egl/system requirement)
+                cmake_extra_ldflags += ["-L{}".format(it) for it in self.dependencies["wayland"].cpp_info.libdirs]
+                tc.variables["SDL_WAYLAND_SHARED"] = self.options["wayland"].shared
+
+            tc.variables["SDL_DIRECTFB"] = self.options.directfb
+            tc.variables["SDL_RPI"] = self.options.video_rpi
+            tc.variables["HAVE_LIBUNWIND_H"] = self.options.libunwind
+        elif self.settings.os == "Windows":
+            tc.variables["SDL_DIRECTX"] = self.options.directx
+
+        tc.variables["SDL2_DISABLE_SDL2MAIN"] = not self.options.sdl2main
+
+        # Add extra information collected from the deps
+        tc.variables["EXTRA_LDFLAGS"] = ";".join(cmake_extra_ldflags)
+        tc.variables["CMAKE_REQUIRED_INCLUDES"] = ";".join(cmake_required_includes)
+        cmake_extra_cflags = ["-I{}".format(path) for _, dep in self.dependencies.items() for path in
+                              dep.cpp_info.includedirs]
+        tc.variables["EXTRA_CFLAGS"] = ";".join(cmake_extra_cflags)
+        tc.variables["EXTRA_LIBS"] = ";".join(cmake_extra_libs)
+        tc.generate()
 
     def build(self):
-        for patch in self.conan_data['patches'][self.version]:
-            tools.patch(**patch)
-
         # ensure sdl2-config is created for MinGW
-        tools.replace_in_file(os.path.join(self.source_subfolder, "CMakeLists.txt"),
-                              "if(NOT WINDOWS OR CYGWIN)",
-                              "if(NOT WINDOWS OR CYGWIN OR MINGW)")
-        tools.replace_in_file(os.path.join(self.source_subfolder, "CMakeLists.txt"),
-                              "if(NOT (WINDOWS OR CYGWIN))",
-                              "if(NOT (WINDOWS OR CYGWIN OR MINGW))")
+        # tools.replace_in_file(os.path.join(self.source_subfolder, "CMakeLists.txt"),
+        #                       "if(NOT WINDOWS OR CYGWIN)",
+        #                       "if(NOT WINDOWS OR CYGWIN OR MINGW)")
+        # tools.replace_in_file(os.path.join(self.source_subfolder, "CMakeLists.txt"),
+        #                       "if(NOT (WINDOWS OR CYGWIN))",
+        #                       "if(NOT (WINDOWS OR CYGWIN OR MINGW))")
 
+        # cmake = CMake(self)
+        # if self.settings.os in ['iOS', 'Macos', 'tvOS']:
+        #     unsupported_features = ['FSEEKO64', 'ITOA', '_LTOA', '_STRLWR', '_STRREV', '_STRUPR', '_UI64TOA', '_UITOA',
+        #                             '_ULTOA', '_I64TOA']
+        #     for feature in unsupported_features:
+        #         cmake.definitions['HAVE_%s' % feature] = 'FALSE'
+
+        # if self.settings.os in ['Android']:
+        #     cmake.definitions['VIDEO_VULKAN'] = 'FALSE'
+
+        self._patch_sources()
         cmake = CMake(self)
-        if self.settings.os in ['iOS', 'Macos', 'tvOS']:
-            unsupported_features = ['FSEEKO64', 'ITOA', '_LTOA', '_STRLWR', '_STRREV', '_STRUPR', '_UI64TOA', '_UITOA',
-                                    '_ULTOA', '_I64TOA']
-            for feature in unsupported_features:
-                cmake.definitions['HAVE_%s' % feature] = 'FALSE'
-
-        if self.settings.os in ['Android']:
-            cmake.definitions['VIDEO_VULKAN'] = 'FALSE'
-
-        cmake.definitions['SDL_SHARED_ENABLED_BY_DEFAULT'] = 'ON' if self.options.shared else 'OFF'
-        cmake.definitions['SDL_STATIC_ENABLED_BY_DEFAULT'] = 'OFF' if self.options.shared else 'ON'
-        cmake.definitions['SDL_CMAKE_DEBUG_POSTFIX'] = ''
-
-        if not self.options.shared and self.options.get_safe('fPIC'):
-            cmake.definitions['SDL_STATIC_PIC'] = 'ON'
-
-        cmake.configure(source_folder='src')
+        cmake.configure()
         cmake.build()
-        cmake.install()
+
+    def _package_java_sources(self):
+        java_target = os.path.join(self.package_folder, 'share', 'java')
+        copy(self, pattern="*.java",
+             src=os.path.join(self.source_folder, 'android-project', 'app', 'src', 'main', 'java'),
+             dst=java_target, keep_path=True)
 
     def package(self):
-        # Extract the License/s from the header to a file
-        with tools.chdir(self.source_subfolder):
-            tmp = tools.load(os.path.join(self.source_subfolder, 'include', 'SDL.h'))
-            license_contents = tmp[2:tmp.find('*/', 1)]
-            tools.save('LICENSE', license_contents)
+        copy(self, pattern="LICENSE.txt", src=os.path.join(self.source_folder),
+             dst=os.path.join(self.package_folder, "licenses"))
 
-        # Copy the license files
-        self.copy('LICENSE', src=self.source_subfolder, dst='licenses')
-
-        # Binaries are bound to the build OS
-        tools.rmdir(os.path.join(self.package_folder, 'bin'))
+        cmake = CMake(self)
+        cmake.install()
+        rm(self, "sdl2-config", os.path.join(self.package_folder, "bin"))
+        rmdir(self, os.path.join(self.package_folder, "cmake"))
+        rmdir(self, os.path.join(self.package_folder, "lib", "cmake"))
+        rmdir(self, os.path.join(self.package_folder, "lib", "pkgconfig"))
+        rmdir(self, os.path.join(self.package_folder, "libdata"))
+        rmdir(self, os.path.join(self.package_folder, "share"))
 
         if self.settings.os == 'Android':
-            java_target = os.path.join(self.package_folder, 'share', 'java')
-            self.copy('*.java',
-                      src=os.path.join(self.source_subfolder, 'android-project', 'app', 'src', 'main', 'java'),
-                      dst=java_target, keep_path=True)
-
-            key_name = 'shared' if self.options.shared else 'static'
-            for patch in self.conan_data['package_patches'][self.version][key_name]:
-                tools.patch(**patch, base_path=java_target)
+            self._package_java_sources()
 
     def package_info(self):
-        self.cpp_info.libs.append('SDL2')
-        self.cpp_info.libs.append('SDL2main')
+        self.cpp_info.set_property("cmake_file_name", "SDL2")
 
-        self.cpp_info.names['cmake_find_package'] = 'SDL2'
-        self.cpp_info.names['cmake_find_package_multi'] = 'SDL2'
+        postfix = "d" if self.settings.os != "Android" and self.settings.build_type == "Debug" else ""
 
-        if self.settings.os == 'Macos':
-            self.cpp_info.libs.append('iconv')
-            self.cpp_info.frameworks.extend(['AudioToolbox', 'CoreAudio', 'CoreGraphics', 'CoreFoundation',
-                                             'CoreVideo', 'QuartzCore', 'Metal', 'Cocoa', 'Carbon', 'Foundation',
-                                             'CoreServices', 'ApplicationServices', 'AppKit', 'IOKit', 'ForceFeedback'])
+        # SDL2
+        lib_postfix = postfix
+        if is_msvc(self) and not self.options.shared:
+            lib_postfix = "-static" + postfix
 
-        elif self.settings.os in ['iOS', 'tvOS']:
-            self.cpp_info.libs.append('iconv')
-            self.cpp_info.frameworks.extend(['AudioToolbox', 'AVFoundation', 'CoreAudio', 'CoreGraphics',
-                                             'Foundation', 'GameController', 'Metal', 'OpenGLES', 'QuartzCore', 'UIKit',
-                                             'CoreBluetooth', 'CoreHaptics'])
-            if self.settings.os == 'iOS':
-                self.cpp_info.frameworks.append('CoreMotion')
+        self.cpp_info.components["libsdl2"].set_property("cmake_target_name", "SDL2::SDL2")
+        if not self.options.shared:
+            self.cpp_info.components["libsdl2"].set_property("cmake_target_aliases", ["SDL2::SDL2-static"])
+        self.cpp_info.components["libsdl2"].set_property("pkg_config_name", "sdl2")
 
-        elif self.settings.os == 'Android':
-            self.cpp_info.libs.extend([
-                'dl',
-                'GLESv1_CM',
-                'GLESv2',
-                'log',
-                'android',
-                'hidapi'
-            ])
+        self.cpp_info.components["libsdl2"].includedirs.append(os.path.join("include"))
+        self.cpp_info.components["libsdl2"].libs = ["SDL2" + lib_postfix]
+        if self.options.get_safe("iconv", False):
+            self.cpp_info.components["libsdl2"].requires.append("libiconv::libiconv")
+        if self.settings.os == "Linux":
+            self.cpp_info.components["libsdl2"].system_libs = ["dl", "rt", "m", "pthread"]
+            if self.options.alsa:
+                self.cpp_info.components["libsdl2"].requires.append("libalsa::libalsa")
+            if self.options.pulse:
+                self.cpp_info.components["libsdl2"].requires.append("pulseaudio::pulseaudio")
+            if self.options.opengl:
+                self.cpp_info.components["libsdl2"].requires.append("opengl::opengl")
+            if self.options.jack:
+                self.cpp_info.components["libsdl2"].requires.append("jack::jack")
+            if self.options.sndio:
+                self.cpp_info.components["libsdl2"].requires.append("sndio::sndio")
+            if self.options.nas:
+                self.cpp_info.components["libsdl2"].requires.append("nas::nas")
+            if self.options.esd:
+                self.cpp_info.components["libsdl2"].requires.append("esd::esd")
+            if self.options.directfb:
+                self.cpp_info.components["libsdl2"].requires.append("directfb::directfb")
+            if self.options.video_rpi:
+                self.cpp_info.components["libsdl2"].libs.append("bcm_host")
+                self.cpp_info.components["libsdl2"].includedirs.extend([
+                    "/opt/vc/include",
+                    "/opt/vc/include/interface/vcos/pthreads",
+                    "/opt/vc/include/interface/vmcs_host/linux"
+                ])
+                self.cpp_info.components["libsdl2"].libdirs.append("/opt/vc/lib")
+                self.cpp_info.components["libsdl2"].sharedlinkflags.append("-Wl,-rpath,/opt/vc/lib")
+                self.cpp_info.components["libsdl2"].exelinkflags.append("-Wl,-rpath,/opt/vc/lib")
+            if self.options.wayland:
+                self.cpp_info.components["libsdl2"].requires.append("wayland::wayland")
+                self.cpp_info.components["libsdl2"].requires.append("xkbcommon::xkbcommon")
+                self.cpp_info.components["libsdl2"].requires.append("egl::egl")
+            if self.options.libunwind:
+                self.cpp_info.components["libsdl2"].requires.append("libunwind::libunwind")
+        elif is_apple_os(self) and not self.options.shared:
+            self.cpp_info.components["libsdl2"].frameworks = [
+                "AudioToolbox", "AVFoundation", "CoreVideo", "CoreAudio", "Metal", "Foundation", "QuartzCore"
+            ]
+            if self.settings.os == "Macos":
+                self.cpp_info.components["libsdl2"].frameworks.extend(
+                    ["Cocoa", "Carbon", "IOKit", "ForceFeedback", "GameController"])
+            elif self.settings.os in ["iOS", "tvOS", "watchOS"]:
+                self.cpp_info.components["libsdl2"].frameworks.extend([
+                    "UIKit", "OpenGLES", "GameController", "CoreGraphics", "CoreBluetooth",
+                ])
+                if self.settings.os != "tvOS":
+                    # CoreMotion is not available for tvOS
+                    self.cpp_info.components["libsdl2"].frameworks.append("CoreMotion")
+            self.cpp_info.components["libsdl2"].sharedlinkflags.append("-Wl,-weak_framework,CoreHaptics")
+            self.cpp_info.components["libsdl2"].exelinkflags.append("-Wl,-weak_framework,CoreHaptics")
+        elif self.settings.os == "Windows":
+            self.cpp_info.components["libsdl2"].system_libs = ["user32", "gdi32", "winmm", "imm32", "ole32", "oleaut32",
+                                                               "version", "uuid", "advapi32", "setupapi", "shell32"]
+            if self.settings.compiler == "gcc":
+                self.cpp_info.components["libsdl2"].system_libs.append("mingw32")
+        elif self.settings.os == "Android" and not self.options.shared:
+            self.cpp_info.components["libsdl2"].system_libs.extend(["android", "dl", "log"])
+            if self.options.opengles:
+                self.cpp_info.components["libsdl2"].system_libs.extend(["GLESv1_CM", "GLESv2"])
+            self.cpp_info.components["libsdl2"].system_libs.append("OpenSLES")
 
-        elif self.settings.os == 'Windows':
-            self.cpp_info.libs.extend(['imm32', 'version', 'winmm', 'Setupapi'])
+        # SDL2main
+        if self.options.sdl2main:
+            self.cpp_info.components["sdl2main"].set_property("cmake_target_name", "SDL2::SDL2main")
+            self.cpp_info.components["sdl2main"].libs = ["SDL2main" + postfix]
+            self.cpp_info.components["sdl2main"].requires = ["libsdl2"]
 
-        elif self.settings.os == 'Linux':
-            self.cpp_info.libs.extend(['dl', 'm', 'pthread'])
+        # Workaround to avoid unwanted sdl::sdl target in CMakeDeps generator
+        self.cpp_info.set_property(
+            "cmake_target_name",
+            "SDL2::{}".format("SDL2main" if self.options.sdl2main else "SDL2"),
+        )
+
+        # Add Java sources
+        if self.settings.os == 'Android':
+            self.cpp_info.set_property("extra_sources", os.path.join(self.package_folder, 'share'))

@@ -1,20 +1,26 @@
-from conans import ConanFile, CMake, tools
+from conan import ConanFile
+from conan.tools.build import can_run
+from conan.tools.cmake import cmake_layout, CMake
 import os
-import sys
 
 
-class Recipe(ConanFile):
-    settings = "os", "compiler", "arch", "build_type"
-    generators = "cmake"
+class TestPackageConan(ConanFile):
+    settings = "os", "arch", "compiler", "build_type"
+    generators = "CMakeToolchain", "CMakeDeps", "VirtualRunEnv"
+    test_type = "explicit"
+
+    def requirements(self):
+        self.requires(self.tested_reference_str)
+
+    def layout(self):
+        cmake_layout(self)
 
     def build(self):
         cmake = CMake(self)
         cmake.configure()
         cmake.build()
 
-
     def test(self):
-        if tools.cross_building(self.settings):
-            return
-
-        self.run(os.path.join('bin', 'test'), run_environment=True)
+        if can_run(self):
+            bin_path = os.path.join(self.cpp.build.bindir, "test")
+            self.run(bin_path, env="conanrun")
