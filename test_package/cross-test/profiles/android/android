@@ -1,0 +1,11 @@
+include(default)
+
+[settings]
+os=Android
+compiler=clang
+compiler.version=9
+compiler.cppstd=17
+compiler.libcxx=c++_static
+
+[tool_requires]
+android-toolchain/r25c@conan-burrito/stable

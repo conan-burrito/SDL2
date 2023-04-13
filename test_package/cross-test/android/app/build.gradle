@@ -1,0 +1,152 @@
+apply plugin: 'com.android.application'
+
+android {
+    compileSdkVersion 33
+
+    defaultConfig {
+        applicationId "com.android.cross_test"
+        minSdkVersion 16
+        targetSdkVersion 33
+        versionCode 1
+        versionName "1.0"
+
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    sourceSets {
+        main {
+            java.srcDirs += 'src/main/generated/java'
+            assets.srcDirs += '../../assets'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_1_8
+        targetCompatibility = JavaVersion.VERSION_1_8
+    }
+    namespace 'com.android.cross_test'
+}
+
+def deleteDirectory(path) {
+    println("Deleting: ${path}")
+    for (def file : path.listFiles()) {
+        println("Deleting: ${file}")
+        if (file.isDirectory()) {
+            deleteDirectory(file)
+        } else {
+            file.delete()
+        }
+    }
+    path.delete()
+}
+
+def copyLibraries(src, dest) {
+    copy {
+        from src
+        include "*.so"
+        into dest
+    }
+}
+
+def conanClean(conanArch, androidArch) {
+    def currentDir = file('.').absolutePath
+    def projectRoot = file(file('.').absolutePath + "/../../").absolutePath
+    def buildDir = new File(currentDir + "/build/conan/" + conanArch)
+
+    print("Current dir: ${currentDir} \n")
+    print("Project root: ${projectRoot} \n")
+    print("Build dir: ${buildDir} \n")
+
+    if (!currentDir.endsWith("app")) {
+        ant.fail("Invalid working ditrectory: ${currentDir}")
+        return
+    }
+
+    // Remove previously generated files and libraries for the given architecture
+    deleteDirectory(new File(currentDir + "/src/main/generated"))
+    deleteDirectory(buildDir)
+}
+
+def conanInstall(conanArch, androidArch) {
+    def currentDir = file('.').absolutePath
+    def projectRoot = file(file('.').absolutePath + "/../../").absolutePath
+    def buildDir = new File(currentDir + "/build/conan/" + conanArch)
+    def targetDir = new File(currentDir + "/src/main/jniLibs/" + androidArch)
+
+    print("Current dir: ${currentDir} \n")
+    print("Project root: ${projectRoot} \n")
+    print("Build dir: ${buildDir} \n")
+    print("Target dir: ${targetDir} \n")
+    print("PATH: ${System.getenv('PATH')} \n")
+
+    if (!currentDir.endsWith("app")) {
+        ant.fail("Invalid working directory: ${currentDir}")
+        return
+    }
+
+    buildDir.mkdirs()
+    targetDir.mkdirs()
+
+    def cppSourcesDir = projectRoot
+    def profile = cppSourcesDir + "/profiles/android/" + conanArch
+
+    // conan install - fetch libraries
+    def cmd = "conan build " + cppSourcesDir + " -u -pr:b default -pr:h " + profile +
+              " --build=missing -c tools.cmake.cmake_layout:build_folder_vars=['settings.arch']"
+    print(">> Build: ${cmd} \n")
+
+    def out = new StringBuilder(), err = new StringBuilder()
+    def proc = cmd.execute(null, buildDir)
+    proc.consumeProcessOutput(out, err)
+    proc.waitFor()
+    println "$out $err"
+    if (proc.exitValue() != 0) {
+        ant.fail("${cmd} failed")
+        return
+    }
+
+    def libDir = new File(buildDir.absolutePath + "/Release")
+    copyLibraries(libDir, targetDir)
+}
+
+task conanInstallAll {
+    group 'Conan'
+    description 'Install libraries for all the CPU architecture types'
+
+    doLast {
+        conanInstall("armv7", "armeabi-v7a")
+        conanInstall("armv8", "arm64-v8a")
+        conanInstall("x86", "x86")
+        conanInstall("x86_64", "x86_64")
+    }
+}
+
+task conanClean {
+    group 'Conan'
+    description 'Remove conan build directories'
+
+    doLast {
+        conanClean("armv7", "armeabi-v7a")
+        conanClean("armv8", "arm64-v8a")
+        conanClean("x86", "x86")
+        conanClean("x86_64", "x86_64")
+    }
+}
+
+preBuild.dependsOn conanInstallAll
+
+dependencies {
+    implementation fileTree(dir: "libs", include: ["*.jar"])
+    implementation 'androidx.appcompat:appcompat:1.2.0'
+    implementation 'androidx.constraintlayout:constraintlayout:2.0.1'
+    testImplementation 'junit:junit:4.12'
+    androidTestImplementation 'androidx.test.ext:junit:1.1.2'
+    androidTestImplementation 'androidx.test.espresso:espresso-core:3.3.0'
+}
