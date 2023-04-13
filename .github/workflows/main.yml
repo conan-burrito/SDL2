@@ -1,7 +1,7 @@
 name: build
 
 env:
-  REFERENCE: "SDL2/2.26.4@conan-burrito/stable"
+  REFERENCE: "sdl2/2.26.4@conan-burrito/stable"
 
 on:
   pull_request:
@@ -85,23 +85,24 @@ jobs:
         run: |
           conan --version
           conan profile detect
+          conan config install ./profiles
           conan remote add conan-burrito "${{ secrets.CONAN_UPLOAD }}"
           conan remote login conan-burrito "${{ secrets.CONAN_LOGIN_USERNAME }}" -p "${{ secrets.CONAN_PASSWORD }}"
 
       - name: Build native
         if: ${{ matrix.target == 'native' }}
         run:  |
-          conan create -pr:b default -pr:h default -s:h arch.cpu=${{ matrix.arch }}  --user=conan-burrito --channel=stable -b missing .
+          conan create -pr:b default -pr:h default -s:h arch=${{ matrix.arch }}  --user=conan-burrito --channel=stable -b missing .
 
       - name: Build for iOS
         if: ${{ matrix.target == 'iOS' }}
         run:  |
-          conan create -pr:b default -pr:h ./test_package/cross-test/profiles/ios/${{ matrix.arch }} --user=conan-burrito --channel=stable -b missing -c:h tools.cmake.cmaketoolchain:generator=Ninja .
+          conan create -pr:b default -pr:h ios/${{ matrix.arch }} --user=conan-burrito --channel=stable -b missing  .
 
       - name: Build for Android
         if: ${{ matrix.target == 'android' }}
         run:  |
-          conan create -pr:b default -pr:h ./test_package/cross-test/profiles/android/${{ matrix.arch }} --user=conan-burrito --channel=stable -b missing .
+          conan create -pr:b default -pr:h android/${{ matrix.arch }} --user=conan-burrito --channel=stable -b missing .
 
       - name: Upload artefacts
         run: conan upload -r conan-burrito ${{ env.REFERENCE }}
